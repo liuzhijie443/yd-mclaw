@@ -1,4 +1,4 @@
-<img width="731" height="650" alt="image" src="https://github.com/user-attachments/assets/5481b0f3-c328-4945-b142-d89179add788" /># MClaw 使用与部署教程
+# MClaw 使用与部署教程
 
 本文档面向最终用户，说明如何让 MClaw 切换模型、执行部署指南、配置 Cloudflare Tunnels、完成内网穿透，以及通过 SSH 连接容器。
 
@@ -105,6 +105,7 @@ CF_TOKEN="你的 Cloudflare Tunnel Token"
 完成后，就可以通过 Web 域名访问 OpenClaw，并通过 Cloudflare Access 做 SSH 穿透。
 
 <img width="820" height="725" alt="8c95851599b3d4c9386c923403f402b9" src="https://github.com/user-attachments/assets/bdc7ac5e-9ab1-4aa9-9d2f-9dcc002d8811" />
+<img width="731" height="650" alt="image" src="https://github.com/user-attachments/assets/5481b0f3-c328-4945-b142-d89179add788" />
 <img width="739" height="654" alt="image" src="https://github.com/user-attachments/assets/402f1096-7c84-4192-95c0-eb95a1fbab52" />
 
 
