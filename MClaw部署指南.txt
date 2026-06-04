@@ -1,0 +1,658 @@
+#  MClaw 部署指南
+
+此文档面向MClaw智能体使用。
+
+## 变量配置（部署前必填）
+告诉用户设置GATEWAY_AUTH_TOKEN会导致官方客户端失联，必须内网穿透使用WebUI界面访问，请谨慎操作。
+如果GATEWAY_AUTH_TOKEN为空则不执行Gateway config.patch 热更新配置。
+```bash
+
+GATEWAY_AUTH_TOKEN=""
+BASE_URL="你的URL"
+API_KEY="你的KEY"
+MODEL="模型名字"
+CF_TOKEN="你的CF_TOKEN"
+```
+
+## 容器环境须知
+
+在开始部署前，**必须先将以下内容写入 MEMORY.md**：
+
+```
+# 容器环境特性
+- 系统架构：x86_64 (amd64)，容器内部为 Debian 环境。
+- 权限限制：用户 node（uid=2000），无 root，无 sudo。文件系统只读，apt-get 等包管理器不可用。
+- 终端限制：.bashrc 会被重置，自启动依赖 Gateway Hook boot-md 触发后台服务。
+- 所有自定义软件必须安装到 /home/node/.local/bin/ 或 /home/node/bin/，动态库放入 /home/node/.local/lib/。
+
+# 软件安装与依赖策略
+1. 优先寻找并下载预编译的静态二进制文件（Linux amd64/x86_64 版本），直接赋予执行权限 (chmod +x) 即可使用。
+2. 若必须提取动态库或无独立二进制，请从 Debian 官方仓库下载 .deb 包：
+   - 镜像参考地址：http://deb.debian.org/debian/pool/main/
+   - 操作规范：下载 .deb → 使用 dpkg-deb -x 解压至 /tmp → 提取所需二进制或 .so 文件至本地目录 → 配置 LD_LIBRARY_PATH。
+   - 应用数据（配置文件、SQLite数据库、日志、缓存等状态数据）必须统一集中放置在：/home/node/data/<应用名称>/ 目录下，确保数据持久化且便于备份。
+3. GitHub 项目下载与加速策略：
+   - 任何涉及从 GitHub 克隆源码 (`git clone`) 或下载 Release 文件 (`wget`/`curl`) 的操作，使用加速代理以确保网络连通性。
+   - 操作规则：在原始的 GitHub 完整链接前，直接拼接加速前缀 `http://ghfast.top/`。
+   - 示例（Release 下载）：`wget http://ghfast.top/https://github.com/user/repo/releases/download/v1.0/binary-amd64.tar.gz`
+   - 示例（源码克隆）：`git clone http://ghfast.top/https://github.com/user/repo.git`
+
+# startall.sh 服务管理
+- /home/node/startall.sh 是统一服务启动脚本，容器启动时自动执行
+- 所有安装的应用必须添加到 startall.sh 中，确保容器重启后自动恢复
+- 当用户说「管理程序」时，读取 startall.sh 内容让用户选择操作（启动/停止/重启/查看状态/卸载/关闭自启）
+- 当用户说「执行初始化」时，执行startall.sh。
+
+# 修改配置
+用户修改模型或GATEWAY_AUTH_TOKEN、API_KEY、BASE_URL、CF_TOKEN，需要同步修改/home/node/startall.sh和/home/node/watchdog.sh中的值。
+```
+
+---
+
+## 第一步：安装 Cloudflared
+
+>  **关于 startall.sh**：`/home/node/startall.sh` 是 MClaw 的统一服务启动脚本，负责在容器启动时自动还原配置并启动所有已注册的服务。**所有新安装的应用都必须添加到 startall.sh 中**，以确保容器重启后能自动恢复运行。当你说「管理程序」时，MClaw 会读取 startall.sh 的内容供你选择操作（启动/停止/重启/查看状态）。
+
+```bash
+mkdir -p /home/node/bin
+curl -sSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o /home/node/bin/cloudflared
+chmod +x /home/node/bin/cloudflared
+```
+
+## 第二步：安装 Dropbear SSH、生成 SSH 密钥并测试运行
+
+```
+# ===== 1. 下载并解压 dropbear 二进制 =====
+mkdir -p /home/node/.local/bin /home/node/.local/lib /home/node/.ssh
+if [ ! -x /home/node/.local/bin/dropbear ]; then
+  curl -sSL 'http://deb.debian.org/debian/pool/main/d/dropbear/dropbear-bin_2022.83-1+deb12u3_amd64.deb' -o /tmp/dropbear.deb
+  dpkg-deb -x /tmp/dropbear.deb /tmp/dropbear-extract
+  cp /tmp/dropbear-extract/usr/sbin/dropbear /home/node/.local/bin/dropbear
+  cp /tmp/dropbear-extract/usr/bin/dropbearkey /home/node/.local/bin/dropbearkey
+  cp /tmp/dropbear-extract/usr/bin/dbclient /home/node/.local/bin/dbclient 2>/dev/null || true
+  chmod +x /home/node/.local/bin/dropbear /home/node/.local/bin/dropbearkey
+  rm -rf /tmp/dropbear.deb /tmp/dropbear-extract
+fi
+
+# ===== 2. 下载并解压依赖库 =====
+if [ ! -f /home/node/.local/lib/libtomcrypt.so.1 ]; then
+  curl -sSL 'http://deb.debian.org/debian/pool/main/libt/libtommath/libtommath1_1.2.0-6_amd64.deb' -o /tmp/libtommath1.deb
+  curl -sSL 'http://deb.debian.org/debian/pool/main/libt/libtomcrypt/libtomcrypt1_1.18.2-6_amd64.deb' -o /tmp/libtomcrypt1.deb
+  dpkg-deb -x /tmp/libtommath1.deb /tmp/libtommath1-extract
+  dpkg-deb -x /tmp/libtomcrypt1.deb /tmp/libtomcrypt1-extract
+  cp /tmp/libtommath1-extract/usr/lib/x86_64-linux-gnu/libtommath.so.1.2.0 /home/node/.local/lib/
+  cp /tmp/libtomcrypt1-extract/usr/lib/x86_64-linux-gnu/libtomcrypt.so.1.0.1 /home/node/.local/lib/
+  cd /home/node/.local/lib/ && ln -sf libtommath.so.1.2.0 libtommath.so.1
+  cd /home/node/.local/lib/ && ln -sf libtomcrypt.so.1.0.1 libtomcrypt.so.1
+  rm -rf /tmp/libtommath1.deb /tmp/libtomcrypt1.deb /tmp/libtommath1-extract /tmp/libtomcrypt1-extract
+fi
+
+# ===== 3. 生成主机密钥 =====
+if [ ! -f /home/node/.ssh/dropbear_ed25519_host_key ]; then
+  LD_LIBRARY_PATH=/home/node/.local/lib /home/node/.local/bin/dropbearkey -t ed25519 -f /home/node/.ssh/dropbear_ed25519_host_key
+fi
+if [ ! -f /home/node/.ssh/dropbear_rsa_host_key ]; then
+  LD_LIBRARY_PATH=/home/node/.local/lib /home/node/.local/bin/dropbearkey -t rsa -f /home/node/.ssh/dropbear_rsa_host_key
+fi
+
+# ===== 4. 生成用户密钥（无密码）并配置 authorized_keys =====
+if [ ! -f /home/node/.ssh/id_ed25519 ]; then
+  ssh-keygen -t ed25519 -f /home/node/.ssh/id_ed25519 -N ''
+fi
+cat /home/node/.ssh/id_ed25519.pub > /home/node/.ssh/authorized_keys
+chmod 700 /home/node/.ssh
+chmod 600 /home/node/.ssh/authorized_keys
+chmod 600 /home/node/.ssh/id_ed25519
+
+# ===== 5. 配置 .profile（自动切换到 bash login shell） =====
+cat > /home/node/.profile << 'EOF'
+# Auto-switch to bash for proper readline support
+if [ -z "$BASH_VERSION" ]; then
+  exec /usr/bin/bash -l
+fi
+EOF
+chmod 644 /home/node/.profile
+
+# ===== 6. 配置 .bashrc（含 LS_COLORS 颜色支持） =====
+cat > /home/node/.bashrc << 'EOF'
+export TERM=xterm-256color
+
+export PATH="/home/node/.local/bin:/home/node/bin:$PATH"
+export LD_LIBRARY_PATH="/home/node/.local/lib:$LD_LIBRARY_PATH"
+# Enable ls colors (hardcoded LS_COLORS since dircolors returns empty)
+LS_COLORS='rs=0:di=01;34:ln=01;36:mh=00:pi=40;33:so=01;35:do=01;35:bd=40;33;01:cd=40;33;01:or=40;31;01:mi=00:su=37;41:sg=30;43:ca=30;41:tw=30;42:ow=34;42:st=37;44:ex=01;32:*.tar=01;31:*.tgz=01;31:*.arc=01;31:*.arj=01;31:*.taz=01;31:*.lha=01;31:*.lz4=01;31:*.lzh=01;31:*.lzma=01;31:*.tlz=01;31:*.txz=01;31:*.tzo=01;31:*.t7z=01;31:*.zip=01;31:*.z=01;31:*.Z=01;31:*.dz=01;31:*.gz=01;31:*.lrz=01;31:*.lz=01;31:*.lzo=01;31:*.xz=01;31:*.zst=01;31:*.tzst=01;31:*.bz2=01;31:*.bz=01;31:*.tbz=01;31:*.tbz2=01;31:*.tz=01;31:*.deb=01;31:*.rpm=01;31:*.jar=01;31:*.war=01;31:*.ear=01;31:*.sar=01;31:*.rar=01;31:*.alz=01;31:*.ace=01;31:*.zoo=01;31:*.cpio=01;31:*.7z=01;31:*.rz=01;31:*.cab=01;31:*.wim=01;31:*.swm=01;31:*.dwm=01;31:*.esd=01;31:*.jpg=01;35:*.jpeg=01;35:*.mjpg=01;35:*.mjpeg=01;35:*.gif=01;35:*.bmp=01;35:*.pbm=01;35:*.pgm=01;35:*.ppm=01;35:*.tga=01;35:*.xbm=01;35:*.xpm=01;35:*.tif=01;35:*.tiff=01;35:*.png=01;35:*.svg=01;35:*.svgz=01;35:*.mng=01;35:*.pcx=01;35:*.mov=01;35:*.mpg=01;35:*.mpeg=01;35:*.m2v=01;35:*.mkv=01;35:*.webm=01;35:*.ogm=01;35:*.mp4=01;35:*.m4v=01;35:*.mp4v=01;35:*.vob=01;35:*.qt=01;35:*.nuv=01;35:*.wmv=01;35:*.asf=01;35:*.rm=01;35:*.rmvb=01;35:*.flc=01;35:*.avi=01;35:*.fli=01;35:*.flv=01;35:*.gl=01;35:*.dl=01;35:*.xcf=01;35:*.xwd=01;35:*.yuv=01;35:*.cgm=01;35:*.emf=01;35:*.ogv=01;35:*.ogx=01;35:*.aac=00;36:*.au=00;36:*.flac=00;36:*.m4a=00;36:*.mid=00;36:*.midi=00;36:*.mka=00;36:*.mp3=00;36:*.mpc=00;36:*.ogg=00;36:*.ra=00;36:*.wav=00;36:*.oga=00;36:*.opus=00;36:*.spx=00;36:*.xspf=00;36:*.pdf=00;33:*.ps=00;33:*.eps=00;33:*.xps=00;33:*.doc=00;33:*.docx=00;33:*.xls=00;33:*.xlsx=00;33:*.ppt=00;33:*.pptx=00;33:*.odt=00;33:*.ods=00;33:*.odp=00;33';
+export LS_COLORS
+alias ls='ls --color=auto'
+alias ll='ls -alF --color=auto'
+alias la='ls -A --color=auto'
+alias l='ls -CF --color=auto'
+alias grep='grep --color=auto'
+alias fgrep='fgrep --color=auto'
+alias egrep='egrep --color=auto'
+
+case $- in
+    *i*) ;;
+      *) return;;
+esac
+
+HISTCONTROL=ignoreboth
+shopt -s histappend
+HISTSIZE=1000
+HISTFILESIZE=2000
+shopt -s checkwinsize
+shopt -s globstar
+
+PS1='\u@\h:\w\$ '
+
+if ! shopt -oq posix; then
+    if [ -f /usr/share/bash-completion/bash_completion ]; then
+        . /usr/share/bash-completion/bash_completion
+    elif [ -f /home/node/.local/share/bash-completion/bash_completion ]; then
+        . /home/node/.local/share/bash-completion/bash_completion
+    elif [ -f /etc/bash_completion ]; then
+        . /etc/bash_completion
+    fi
+fi
+EOF
+
+# ===== 7. 配置 .bash_profile =====
+cat > /home/node/.bash_profile << 'EOF'
+if [ -f ~/.bashrc ]; then
+    . ~/.bashrc
+fi
+if [ -f ~/.profile ]; then
+    . ~/.profile
+fi
+EOF
+
+# ===== 8. 编译 fakestat.so（核心修复：stat权限伪装 + getspnam空密码） =====
+cat > /tmp/fakestat.c << 'EOF'
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <sys/stat.h>
+#include <string.h>
+#include <shadow.h>
+
+typedef int (*orig_stat_t)(const char *restrict, struct stat *restrict);
+typedef int (*orig_lstat_t)(const char *restrict, struct stat *restrict);
+
+static void fix_stat(const char *path, struct stat *st) {
+    if (path && st && strcmp(path, "/home/node") == 0) {
+        st->st_mode = (st->st_mode & ~07777) | 0755;
+    }
+}
+
+int stat(const char *restrict pathname, struct stat *restrict statbuf) {
+    orig_stat_t orig = (orig_stat_t)dlsym(RTLD_NEXT, "stat");
+    int ret = orig(pathname, statbuf);
+    if (ret == 0) fix_stat(pathname, statbuf);
+    return ret;
+}
+
+int lstat(const char *restrict pathname, struct stat *restrict statbuf) {
+    orig_lstat_t orig = (orig_lstat_t)dlsym(RTLD_NEXT, "lstat");
+    int ret = orig(pathname, statbuf);
+    if (ret == 0) fix_stat(pathname, statbuf);
+    return ret;
+}
+
+int __xstat(int ver, const char *restrict pathname, struct stat *restrict statbuf) {
+    typedef int (*orig_t)(int, const char *restrict, struct stat *restrict);
+    orig_t orig = (orig_t)dlsym(RTLD_NEXT, "__xstat");
+    int ret = orig(ver, pathname, statbuf);
+    if (ret == 0) fix_stat(pathname, statbuf);
+    return ret;
+}
+
+int __lxstat(int ver, const char *restrict pathname, struct stat *restrict statbuf) {
+    typedef int (*orig_t)(int, const char *restrict, struct stat *restrict);
+    orig_t orig = (orig_t)dlsym(RTLD_NEXT, "__lxstat");
+    int ret = orig(ver, pathname, statbuf);
+    if (ret == 0) fix_stat(pathname, statbuf);
+    return ret;
+}
+
+/* Intercept getspnam to return empty password for node user
+   This allows dropbear -B (blank password) to work,
+   since node user is not in shadow group and getspnam returns NULL */
+static char empty_pwd[] = "";
+static char node_name[] = "node";
+static struct spwd override_sp = {
+    .sp_namp = node_name,
+    .sp_pwdp = empty_pwd,
+    .sp_lstchg = -1,
+    .sp_min = 0,
+    .sp_max = 99999,
+    .sp_warn = 7,
+    .sp_inact = -1,
+    .sp_expire = -1,
+    .sp_flag = -1
+};
+
+struct spwd *getspnam(const char *name) {
+    typedef struct spwd *(*orig_t)(const char *);
+    orig_t orig = (orig_t)dlsym(RTLD_NEXT, "getspnam");
+    struct spwd *result = orig(name);
+
+    if (name && strcmp(name, "node") == 0) {
+        if (result) {
+            override_sp = *result;
+            override_sp.sp_pwdp = empty_pwd;
+            override_sp.sp_namp = node_name;
+        }
+        return &override_sp;
+    }
+    return result;
+}
+EOF
+gcc -shared -fPIC -o /home/node/.local/lib/fakestat.so /tmp/fakestat.c -ldl
+rm -f /tmp/fakestat.c
+
+# ===== 9. 启动 dropbear（-B 允许空密码登录） =====
+pkill dropbear 2>/dev/null || true
+LD_LIBRARY_PATH=/home/node/.local/lib LD_PRELOAD=/home/node/.local/lib/fakestat.so /home/node/.local/bin/dropbear -r /home/node/.ssh/dropbear_ed25519_host_key -r /home/node/.ssh/dropbear_rsa_host_key -p 2222 -B
+
+# ===== 10. 自测试 =====
+ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i /home/node/.ssh/id_ed25519 -p 2222 node@localhost 'echo ok'
+```
+
+## 第三步：写入 startall.sh
+
+将以下内容写入 `/home/node/startall.sh`，**顶部变量替换为实际值**：
+
+```bash
+#!/bin/bash
+export PATH=/home/node/.local/bin:/home/node/bin:$PATH
+export LD_LIBRARY_PATH="/home/node/.local/lib:$LD_LIBRARY_PATH"
+WORKDIR="/home/node"
+LOGDIR="$WORKDIR/.openclaw/workspace"
+
+# ===== 变量配置 =====
+CONFIG_PATH="$WORKDIR/.openclaw/openclaw.json"
+BASE_URL="<模型API地址>"
+API_KEY="<模型API Key>"
+MODEL="<模型名称>"
+GATEWAY_AUTH_TOKEN="<Gateway Token>"
+CF_TOKEN="<Cloudflare Tunnel Token>"
+# =====================
+
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] 🦞 MClaw 启动脚本开始..."
+
+# --- 还原 .bashrc（Shell 配置还原） ---
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] [0/6] 还原 .bashrc 配置..."
+cat > /home/node/.bashrc << 'BASHRC_EOF'
+export TERM=xterm-256color
+export PATH="/home/node/.local/bin:/home/node/bin:$PATH"
+export LD_LIBRARY_PATH="/home/node/.local/lib:$LD_LIBRARY_PATH"
+# Enable ls colors (hardcoded LS_COLORS since dircolors returns empty)
+LS_COLORS='rs=0:di=01;34:ln=01;36:mh=00:pi=40;33:so=01;35:do=01;35:bd=40;33;01:cd=40;33;01:or=40;31;01:mi=00:su=37;41:sg=30;43:ca=30;41:tw=30;42:ow=34;42:st=37;44:ex=01;32:*.tar=01;31:*.tgz=01;31:*.arc=01;31:*.arj=01;31:*.taz=01;31:*.lha=01;31:*.lz4=01;31:*.lzh=01;31:*.lzma=01;31:*.tlz=01;31:*.txz=01;31:*.tzo=01;31:*.t7z=01;31:*.zip=01;31:*.z=01;31:*.Z=01;31:*.dz=01;31:*.gz=01;31:*.lrz=01;31:*.lz=01;31:*.lzo=01;31:*.xz=01;31:*.zst=01;31:*.tzst=01;31:*.bz2=01;31:*.bz=01;31:*.tbz=01;31:*.tbz2=01;31:*.tz=01;31:*.deb=01;31:*.rpm=01;31:*.jar=01;31:*.war=01;31:*.ear=01;31:*.sar=01;31:*.rar=01;31:*.alz=01;31:*.ace=01;31:*.zoo=01;31:*.cpio=01;31:*.7z=01;31:*.rz=01;31:*.cab=01;31:*.wim=01;31:*.swm=01;31:*.dwm=01;31:*.esd=01;31:*.jpg=01;35:*.jpeg=01;35:*.mjpg=01;35:*.mjpeg=01;35:*.gif=01;35:*.bmp=01;35:*.pbm=01;35:*.pgm=01;35:*.ppm=01;35:*.tga=01;35:*.xbm=01;35:*.xpm=01;35:*.tif=01;35:*.tiff=01;35:*.png=01;35:*.svg=01;35:*.svgz=01;35:*.mng=01;35:*.pcx=01;35:*.mov=01;35:*.mpg=01;35:*.mpeg=01;35:*.m2v=01;35:*.mkv=01;35:*.webm=01;35:*.ogm=01;35:*.mp4=01;35:*.m4v=01;35:*.mp4v=01;35:*.vob=01;35:*.qt=01;35:*.nuv=01;35:*.wmv=01;35:*.asf=01;35:*.rm=01;35:*.rmvb=01;35:*.flc=01;35:*.avi=01;35:*.fli=01;35:*.flv=01;35:*.gl=01;35:*.dl=01;35:*.xcf=01;35:*.xwd=01;35:*.yuv=01;35:*.cgm=01;35:*.emf=01;35:*.ogv=01;35:*.ogx=01;35:*.aac=00;36:*.au=00;36:*.flac=00;36:*.m4a=00;36:*.mid=00;36:*.midi=00;36:*.mka=00;36:*.mp3=00;36:*.mpc=00;36:*.ogg=00;36:*.ra=00;36:*.wav=00;36:*.oga=00;36:*.opus=00;36:*.spx=00;36:*.xspf=00;36:*.pdf=00;33:*.ps=00;33:*.eps=00;33:*.xps=00;33:*.doc=00;33:*.docx=00;33:*.xls=00;33:*.xlsx=00;33:*.ppt=00;33:*.pptx=00;33:*.odt=00;33:*.ods=00;33:*.odp=00;33';
+export LS_COLORS
+alias ls='ls --color=auto'
+alias ll='ls -alF --color=auto'
+alias la='ls -A --color=auto'
+alias l='ls -CF --color=auto'
+alias grep='grep --color=auto'
+alias fgrep='fgrep --color=auto'
+alias egrep='egrep --color=auto'
+
+case $- in
+    *i*) ;;
+      *) return;;
+esac
+
+HISTCONTROL=ignoreboth
+shopt -s histappend
+HISTSIZE=1000
+HISTFILESIZE=2000
+shopt -s checkwinsize
+shopt -s globstar
+
+PS1='\u@\h:\w\$ '
+
+if ! shopt -oq posix; then
+    if [ -f /usr/share/bash-completion/bash_completion ]; then
+        . /usr/share/bash-completion/bash_completion
+    elif [ -f /home/node/.local/share/bash-completion/bash_completion ]; then
+        . /home/node/.local/share/bash-completion/bash_completion
+    elif [ -f /etc/bash_completion ]; then
+        . /etc/bash_completion
+    fi
+fi
+BASHRC_EOF
+
+cat > /home/node/.profile << 'PEOF'
+# Auto-switch to bash for proper readline support
+if [ -z "$BASH_VERSION" ]; then
+  exec /usr/bin/bash -l
+fi
+PEOF
+chmod 644 /home/node/.profile
+
+cat > /home/node/.bash_profile << 'BEOF'
+if [ -f ~/.bashrc ]; then
+    . ~/.bashrc
+fi
+if [ -f ~/.profile ]; then
+    . ~/.profile
+fi
+BEOF
+
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] ✅ .bashrc 已还原"
+
+# --- 还原 MEMORY.md 记忆 ---
+MEMORY_PATH="$LOGDIR/MEMORY.md"
+if [ ! -f "$MEMORY_PATH" ] || ! grep -q '容器环境特性' "$MEMORY_PATH" 2>/dev/null; then
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] [1/6] 追加 MEMORY.md 记忆..."
+  cat >> "$MEMORY_PATH" << 'MEMORY_EOF'
+
+
+# 容器环境特性
+- 系统架构：x86_64 (amd64)，容器内部为 Debian 环境。
+- 权限限制：用户 node（uid=2000），无 root，无 sudo。文件系统只读，apt-get 等包管理器不可用。
+- 终端限制：.bashrc 会被重置，自启动依赖 Gateway Hook (gateway:startup) 触发 launcher.sh 拉起startall.sh启用后台服务。
+- 所有自定义软件必须安装到 /home/node/.local/bin/ 或 /home/node/bin/，动态库放入 /home/node/.local/lib/。
+
+# 软件安装与依赖策略
+1. 优先寻找并下载预编译的静态二进制文件（Linux amd64/x86_64 版本），直接赋予执行权限 (chmod +x) 即可使用。
+2. 若必须提取动态库或无独立二进制，请从 Debian 官方仓库下载 .deb 包：
+   - 镜像参考地址：http://deb.debian.org/debian/pool/main/
+   - 操作规范：下载 .deb → 使用 dpkg-deb -x 解压至 /tmp → 提取所需二进制或 .so 文件至本地目录 → 配置 LD_LIBRARY_PATH。
+   - 应用数据（配置文件、SQLite数据库、日志、缓存等状态数据）必须统一集中放置在：/home/node/data/<应用名称>/ 目录下，确保数据持久化且便于备份。
+3. GitHub 项目下载与加速策略：
+   - 任何涉及从 GitHub 克隆源码 (`git clone`) 或下载 Release 文件 (`wget`/`curl`) 的操作，使用加速代理以确保网络连通性。
+   - 操作规则：在原始的 GitHub 完整链接前，直接拼接加速前缀 `http://ghfast.top/`。
+   - 示例（Release 下载）：`wget http://ghfast.top/https://github.com/user/repo/releases/download/v1.0/binary-amd64.tar.gz`
+   - 示例（源码克隆）：`git clone http://ghfast.top/https://github.com/user/repo.git`
+
+# startall.sh 服务管理
+- /home/node/startall.sh 是统一服务启动脚本，容器启动时自动执行
+- 所有安装的应用必须添加到 startall.sh 中，确保容器重启后自动恢复
+- 当用户说「管理程序」时，读取 startall.sh 内容让用户选择操作（启动/停止/重启/查看状态/卸载/关闭自启）
+- 当用户说「执行初始化」时，执行startall.sh。
+
+# 修改模型或GATEWAY_AUTH_TOKEN
+如果需要修改模型，需要同步修改/home/node/startall.sh和/home/node/watchdog.sh中的值。
+
+MEMORY_EOF
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] ✅ MEMORY.md 已还原"
+else
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] [1/6] MEMORY.md 记忆完整，跳过还原"
+fi
+
+# --- 还原 openclaw.json 配置 ---
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] [2/6] 还原 openclaw.json 配置..."
+[ ! -f "$CONFIG_PATH" ] && echo '{}' > "$CONFIG_PATH"
+
+CONFIG_PATH="$CONFIG_PATH" \
+BASE_URL="$BASE_URL" \
+API_KEY="$API_KEY" \
+MODEL="$MODEL" \
+GATEWAY_AUTH_TOKEN="$GATEWAY_AUTH_TOKEN" \
+node -e "
+const fs = require('fs');
+const path = process.env.CONFIG_PATH;
+let config = {};
+try { config = JSON.parse(fs.readFileSync(path, 'utf8')); } catch(e) { console.error(e); process.exit(1); }
+if (config.models?.providers?.router) {
+    config.models.providers.router.baseUrl = process.env.BASE_URL;
+    config.models.providers.router.apiKey = process.env.API_KEY;
+    if (Array.isArray(config.models.providers.router.models) && config.models.providers.router.models.length > 0) {
+        config.models.providers.router.models[0].id = process.env.MODEL;
+        config.models.providers.router.models[0].name = process.env.MODEL;
+    }
+}
+if (config.agents?.defaults) {
+    if (config.agents.defaults.model) config.agents.defaults.model.primary = 'router/' + process.env.MODEL;
+    if (config.agents.defaults.models) {
+        delete config.agents.defaults.models['router/respond-with-actual-model-identity'];
+        config.agents.defaults.models['router/' + process.env.MODEL] = { alias: process.env.MODEL };
+    }
+}
+const token = process.env.GATEWAY_AUTH_TOKEN;
+if (token && token.trim() !== '') {
+    if (config.gateway?.auth) config.gateway.auth.token = token;
+    if (config.channels?.['dingtalk-connector']) config.channels['dingtalk-connector'].gatewayToken = token;
+}
+fs.writeFileSync(path, JSON.stringify(config, null, 2));
+console.log('✅ 配置已还原');
+"
+
+# --- 启动 Cloudflared ---
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] [3/6] 启动 Cloudflared..."
+CF_BINARY="$WORKDIR/bin/cloudflared"
+CF_PIDFILE="$LOGDIR/cloudflared.pid"
+
+[ -f "$CF_PIDFILE" ] && kill -9 "$(cat $CF_PIDFILE)" 2>/dev/null
+pkill -9 -f 'cloudflared.*tunnel' 2>/dev/null
+rm -f "$CF_PIDFILE"
+sleep 1
+
+tail -n 1000 "$LOGDIR/cloudflared.log" > "$LOGDIR/cloudflared.log.tmp" 2>/dev/null && mv "$LOGDIR/cloudflared.log.tmp" "$LOGDIR/cloudflared.log"
+
+nohup "$CF_BINARY" tunnel --no-autoupdate run --token "$CF_TOKEN" >> "$LOGDIR/cloudflared.log" 2>&1 &
+echo $! > "$CF_PIDFILE"
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] ✅ Cloudflared 已启动 (PID $!)"
+
+# --- 启动 Dropbear SSH ---
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] [4/6] 启动 Dropbear SSH..."
+DB_BINARY="$WORKDIR/.local/bin/dropbear"
+DB_HOSTKEY="$WORKDIR/.ssh/dropbear_ed25519_host_key"
+DB_PORT=2222
+DB_PIDFILE="$LOGDIR/dropbear.pid"
+
+[ -f "$DB_PIDFILE" ] && kill -9 "$(cat "$DB_PIDFILE")" 2>/dev/null
+pkill -9 -f "$DB_BINARY" 2>/dev/null
+sleep 1
+
+tail -n 1000 "$LOGDIR/dropbear.log" > "$LOGDIR/dropbear.log.tmp" 2>/dev/null && mv "$LOGDIR/dropbear.log.tmp" "$LOGDIR/dropbear.log"
+
+nohup env LD_LIBRARY_PATH="$WORKDIR/.local/lib" LD_PRELOAD="$WORKDIR/.local/lib/fakestat.so" \
+  "$DB_BINARY" -r "$DB_HOSTKEY" -r "$WORKDIR/.ssh/dropbear_rsa_host_key" -p $DB_PORT -B -E -F \
+  >> "$LOGDIR/dropbear.log" 2>&1 &
+DB_PID=$!
+echo "$DB_PID" > "$DB_PIDFILE"
+
+# 验证进程存活
+sleep 1
+if kill -0 "$DB_PID" 2>/dev/null; then
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] ✅ Dropbear SSH 已启动 (PID $DB_PID, 端口 $DB_PORT)"
+else
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] ❌ Dropbear SSH 启动失败，可能端口被占用"
+  rm -f "$DB_PIDFILE"
+fi
+
+# --- 启动 Watchdog 保活 ---
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] [5/6] 启动 Watchdog 保活..."
+WATCHDOG_PIDFILE="$LOGDIR/watchdog.pid"
+
+if [ -f "$WATCHDOG_PIDFILE" ] && kill -0 "$(cat $WATCHDOG_PIDFILE)" 2>/dev/null; then
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] ⚠️ Watchdog 已在运行 (PID $(cat $WATCHDOG_PIDFILE))，跳过"
+else
+    # 日志防膨胀截断
+    tail -n 1000 "$LOGDIR/watchdog.log" > "$LOGDIR/watchdog.log.tmp" 2>/dev/null && mv "$LOGDIR/watchdog.log.tmp" "$LOGDIR/watchdog.log"
+
+    nohup bash "$WORKDIR/watchdog.sh" >> "$LOGDIR/watchdog.log" 2>&1 &
+    sleep 1
+    if [ -f "$WATCHDOG_PIDFILE" ] && kill -0 "$(cat $WATCHDOG_PIDFILE)" 2>/dev/null; then
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] ✅ Watchdog 已启动 (PID $(cat $WATCHDOG_PIDFILE))"
+    else
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] ⚠️ Watchdog 启动失败"
+    fi
+fi
+
+# --- 健康检查 ---
+sleep 3
+echo '========================================'
+echo '  🦞 MClaw 服务状态'
+echo '========================================'
+[ -f "$CF_PIDFILE" ] && kill -0 "$(cat $CF_PIDFILE)" 2>/dev/null && echo "  Cloudflared:  ✅ (PID $(cat $CF_PIDFILE))" || echo "  Cloudflared:  ❌"
+[ -f "$DB_PIDFILE" ] && kill -0 "$(cat $DB_PIDFILE)" 2>/dev/null && echo "  Dropbear SSH: ✅ (PID $(cat $DB_PIDFILE), 端口 $DB_PORT)" || echo "  Dropbear SSH: ❌"
+[ -f "$WATCHDOG_PIDFILE" ] && kill -0 "$(cat $WATCHDOG_PIDFILE)" 2>/dev/null && echo "  Watchdog:     ✅ (PID $(cat $WATCHDOG_PIDFILE))" || echo "  Watchdog:     ❌"
+echo '========================================'
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] [6/6] 启动完毕！"
+
+# 1. 启用官方内置的 boot-md Hook
+openclaw hooks enable boot-md
+
+# 2. 编写 BOOT.md，利用大模型的工具调用能力实现服务自启
+printf '系统环境已重启。请立即在终端执行以下命令，拉起底层的内网穿透与保活服务。执行完毕后简短回复"底层服务已就绪"即可：' > /home/node/.openclaw/workspace/BOOT.md
+printf '\n```bash\nnohup bash /home/node/startall.sh > /home/node/autostart.log 2>&1 &\n```\n' >> /home/node/.openclaw/workspace/BOOT.md
+```
+
+```bash
+chmod +x /home/node/startall.sh
+```
+
+## 第四步：写入 watchdog.sh
+
+将以下内容写入 `/home/node/watchdog.sh`，**顶部 CF_TOKEN 替换为实际值**：
+
+```bash
+#!/bin/bash
+WORKDIR="/home/node"
+LOGDIR="$WORKDIR/.openclaw/workspace"
+INTERVAL=60
+
+# ===== 变量配置 =====
+CF_TOKEN="<Cloudflare Tunnel Token>"
+# =====================
+
+CF_BINARY="$WORKDIR/bin/cloudflared"
+CF_PIDFILE="$LOGDIR/cloudflared.pid"
+DB_BINARY="$WORKDIR/.local/bin/dropbear"
+DB_HOSTKEY="$WORKDIR/.ssh/dropbear_ed25519_host_key"
+DB_PORT=2222
+DB_PIDFILE="$LOGDIR/dropbear.pid"
+WATCHDOG_PIDFILE="$LOGDIR/watchdog.pid"
+
+log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] [watchdog] $1"; }
+
+# 防止重复启动
+if [ -f "$WATCHDOG_PIDFILE" ] && kill -0 "$(cat $WATCHDOG_PIDFILE)" 2>/dev/null; then
+  log "⚠️ watchdog 已在运行 (PID $(cat $WATCHDOG_PIDFILE))，退出"
+  exit 0
+fi
+
+check_cloudflared() {
+  [ -f "$CF_PIDFILE" ] && kill -0 "$(cat $CF_PIDFILE)" 2>/dev/null && return 0
+  log "⚠️ Cloudflared 已停止，清理并重启中..."
+
+  [ -f "$CF_PIDFILE" ] && kill -9 "$(cat "$CF_PIDFILE")" 2>/dev/null
+  pkill -9 -f 'cloudflared.*tunnel' 2>/dev/null
+  sleep 1
+
+  tail -n 1000 "$LOGDIR/cloudflared.log" > "$LOGDIR/cloudflared.log.tmp" 2>/dev/null && mv "$LOGDIR/cloudflared.log.tmp" "$LOGDIR/cloudflared.log"
+
+  nohup "$CF_BINARY" tunnel --no-autoupdate run --token "$CF_TOKEN" >> "$LOGDIR/cloudflared.log" 2>&1 &
+  echo $! > "$CF_PIDFILE"
+  sleep 2
+  kill -0 "$(cat $CF_PIDFILE)" 2>/dev/null && log "✅ Cloudflared 已重启 (PID $(cat $CF_PIDFILE))" || log "❌ Cloudflared 重启失败"
+}
+
+check_dropbear() {
+  if [ -f "$DB_PIDFILE" ] && kill -0 "$(cat "$DB_PIDFILE")" 2>/dev/null; then
+    return 0
+  fi
+  log "⚠️ Dropbear 已停止，清理并重启中..."
+
+  # 废弃冗长的 10 秒 pgrep 轮询，直接一键物理超度
+  [ -f "$DB_PIDFILE" ] && kill -9 "$(cat "$DB_PIDFILE")" 2>/dev/null
+  pkill -9 -f "$DB_BINARY" 2>/dev/null
+  sleep 1
+
+  tail -n 1000 "$LOGDIR/dropbear.log" > "$LOGDIR/dropbear.log.tmp" 2>/dev/null && mv "$LOGDIR/dropbear.log.tmp" "$LOGDIR/dropbear.log"
+
+  nohup env LD_LIBRARY_PATH="$WORKDIR/.local/lib" LD_PRELOAD="$WORKDIR/.local/lib/fakestat.so" \
+    "$DB_BINARY" -r "$DB_HOSTKEY" -r "$WORKDIR/.ssh/dropbear_rsa_host_key" -p $DB_PORT -B -E -F \
+    >> "$LOGDIR/dropbear.log" 2>&1 &
+  DB_PID=$!
+  echo "$DB_PID" > "$DB_PIDFILE"
+
+  sleep 2
+
+  if kill -0 "$DB_PID" 2>/dev/null; then
+    log "✅ Dropbear 已重启 (PID $DB_PID, 端口 $DB_PORT)"
+  else
+    log "❌ Dropbear 重启失败"
+    rm -f "$DB_PIDFILE"
+  fi
+}
+log "🦞 保活守护启动 (间隔: ${INTERVAL}s)"
+echo $$ > "$WATCHDOG_PIDFILE"
+while true; do check_cloudflared; check_dropbear; sleep $INTERVAL; done
+```
+
+```bash
+chmod +x /home/node/watchdog.sh
+```
+
+## 第五步：首次启动
+
+```bash
+bash /home/node/startall.sh
+touch /tmp/mclaw-startall-done
+```
+
+## 第六步：通过 Gateway config.patch 热更新配置
+
+如果GATEWAY_AUTH_TOKEN为空则不执行Gateway config.patch 热更新配置，不为空则使用 `config.patch` 将 token 和设备认证设置直接推送到运行中的 Gateway，触发热加载（SIGUSR1），无需重启：
+执行以下 gateway 工具调用：
+```
+gateway config.patch
+raw: {"gateway":{"auth":{"mode":"token","token":"<Gateway Token>"},"controlUi":{"dangerouslyDisableDeviceAuth":true}}}
+```
+
+
+## 第七步：配置 Gateway 官方开机自启 Hook
+使用 OpenClaw 官方内置的 `boot-md` 机制。Gateway 启动时会自动读取 `BOOT.md`，让 AI 智能体自主去终端拉起启动脚本：
+
+```bash
+# 1. 启用官方内置的 boot-md Hook
+openclaw hooks enable boot-md
+
+# 2. 编写 BOOT.md，利用大模型的工具调用能力实现服务自启
+printf '系统环境已重启。请立即在终端执行以下命令，拉起底层的内网穿透与保活服务。执行完毕后简短回复"底层服务已就绪"即可：' > /home/node/.openclaw/workspace/BOOT.md
+printf '\n```bash\nnohup bash /home/node/startall.sh > /home/node/autostart.log 2>&1 &\n```\n' >> /home/node/.openclaw/workspace/BOOT.md
+```
+```
+
+## 第八步：输出 SSH 连接信息
+
+```bash
+echo '=== SSH 连接信息 ==='
+echo '端口: 2222'
+echo '用户: node'
+echo '空密码'
+```
+
+## 第九步：系统性能测试
+执行系统性能测试，执行精简版后返回结果。
+```bash
+export noninteractive=true && curl -L https://cdn.spiritlhl.net/https://raw.githubusercontent.com/oneclickvirt/ecs/master/goecs.sh -o goecs.sh && chmod +x goecs.sh && ./goecs.sh install && ./goecs
+```
+
+## 第十步：总结
+1. 输出所有步骤的执行结果。
+2. **断联提示与恢复指引**：明确告知用户，由于第六步修改了 Gateway Token，当前 MClaw 客户端发生断联是**正常现象**。提醒用户接下来需要通过配置好的 Cloudflare 内网穿透域名进入 OpenClaw WebUI，使用新的 Token 重新建立连接。
+3. 询问用户后续是否需要安装其他额外应用（如 cli-proxy-api、openlist 等）。
+---
+
+## 保活体系架构
+
+容器重启或启动 → OpenClaw Gateway 核心进程自动拉起
+  │
+  └─触发→ Hook (gateway:startup 事件)
+      │
+      └─异步执行→ startall.sh (统一环境初始化与服务拉起，原生脱管)
+          │
+          ├─还原→ .bashrc (Shell 配置还原)
+          ├─还原→ MEMORY.md (记忆还原)
+          ├─还原→ openclaw.json (模型与认证配置还原)
+          ├─拉起→ Cloudflared (内网穿透与外网访问)
+          ├─拉起→ Dropbear (底层 SSH 访问)
+          │
+          └─拉起→ Watchdog 守护脚本
+              │
+              └─执行→ 死循环常驻后台 (每 60 秒轮询)
+                      ├─ 检查 Cloudflared 进程存活，死亡则重启
+                      └─ 检查 Dropbear 进程存活，死亡则重启
