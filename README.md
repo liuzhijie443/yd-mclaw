@@ -1,4 +1,4 @@
-# MClaw 使用与部署教程
+<img width="731" height="650" alt="image" src="https://github.com/user-attachments/assets/5481b0f3-c328-4945-b142-d89179add788" /># MClaw 使用与部署教程
 
 本文档面向最终用户，说明如何让 MClaw 切换模型、执行部署指南、配置 Cloudflare Tunnels、完成内网穿透，以及通过 SSH 连接容器。
 
@@ -44,8 +44,8 @@ model：<修改字段>
 1. 一个用于 OpenClaw WebUI。
 2. 一个用于 SSH Access。
 
+<img width="731" height="650" alt="image" src="https://github.com/user-attachments/assets/fbbad6be-8120-48f3-bcb6-e50e5c7f585f" />
 
-<img width="1515" height="594" alt="59948e9a774217b8b9d79334a66cb3f4" src="https://github.com/user-attachments/assets/528a8dc5-66c2-42c7-b842-953bd38795a1" />
 <img width="1251" height="678" alt="604b5f02248bb6180609089c851415a0" src="https://github.com/user-attachments/assets/24153945-5a4f-40d2-82ff-9c37a79f188e" />
 
 ## 3. 下载并修改 `MClaw部署指南.txt`
