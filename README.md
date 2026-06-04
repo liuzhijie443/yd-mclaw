@@ -37,12 +37,16 @@ model：<修改字段>
 1. 登录 Cloudflare Zero Trust 或 Tunnel 管理页面。
 2. 创建一个新的 Tunnel。
 3. 获取该 Tunnel 的 `token`。
-4. 保存好这个 `token`，后续要写入部署配置。
+4. 保存好这个 `token`，后续要写入部署配置，ey开头到结尾的值。
 
 建议同时规划好两个域名用途：
 
 1. 一个用于 OpenClaw WebUI。
 2. 一个用于 SSH Access。
+
+
+<img width="1515" height="594" alt="59948e9a774217b8b9d79334a66cb3f4" src="https://github.com/user-attachments/assets/528a8dc5-66c2-42c7-b842-953bd38795a1" />
+<img width="1251" height="678" alt="604b5f02248bb6180609089c851415a0" src="https://github.com/user-attachments/assets/24153945-5a4f-40d2-82ff-9c37a79f188e" />
 
 ## 3. 下载并修改 `MClaw部署指南.txt`
 
@@ -69,6 +73,7 @@ CF_TOKEN="你的 Cloudflare Tunnel Token"
 如果你不清楚是否需要改这个值，建议先保持为空，确认内网穿透链路可用后再决定是否启用。后续也可以让 MClaw 修改该字段，再执行 Gateway 热更新。
 
 ## 4. 让 MClaw 执行部署指南
+<img width="1024" height="455" alt="9b42bbdcb9efe4bbb02b4a4380446743" src="https://github.com/user-attachments/assets/510c124f-443f-4e25-8414-bb77a8921f2c" />
 
 把你修改好的 `MClaw部署指南.txt` 交给 MClaw，让它严格按文档执行。执行过程中，它通常会完成这些内容：
 
@@ -99,6 +104,10 @@ CF_TOKEN="你的 Cloudflare Tunnel Token"
 
 完成后，就可以通过 Web 域名访问 OpenClaw，并通过 Cloudflare Access 做 SSH 穿透。
 
+<img width="820" height="725" alt="8c95851599b3d4c9386c923403f402b9" src="https://github.com/user-attachments/assets/bdc7ac5e-9ab1-4aa9-9d2f-9dcc002d8811" />
+<img width="739" height="654" alt="image" src="https://github.com/user-attachments/assets/402f1096-7c84-4192-95c0-eb95a1fbab52" />
+
+
 ## 6. SSH 穿透准备
 
 SSH 登录信息如下：
@@ -128,6 +137,7 @@ ssh node@localhost -p 2222
 ```
 
 如果你的本机 `ssh` 已经按 Cloudflare Access 的方式做过额外配置，也可以按你的既有方式接入，但最直接的方式就是先执行上一节的 `cloudflared.exe access ssh`，再连 `localhost:2222`。
+<img width="1045" height="106" alt="image" src="https://github.com/user-attachments/assets/252e6736-cf07-4ff8-b5b1-a652c490e914" />
 
 ## 8. 部署后的日常使用
 
