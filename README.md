@@ -43,8 +43,7 @@ model：<修改字段>
 
 1. 一个用于 OpenClaw WebUI。
 2. 一个用于 SSH Access。
-
-<img width="731" height="650" alt="image" src="https://github.com/user-attachments/assets/fbbad6be-8120-48f3-bcb6-e50e5c7f585f" />
+<img width="1515" height="594" alt="59948e9a774217b8b9d79334a66cb3f4" src="https://github.com/user-attachments/assets/31f29363-19b4-4fe5-ab3e-724b40695173" />
 
 <img width="1251" height="678" alt="604b5f02248bb6180609089c851415a0" src="https://github.com/user-attachments/assets/24153945-5a4f-40d2-82ff-9c37a79f188e" />
 
@@ -104,9 +103,9 @@ CF_TOKEN="你的 Cloudflare Tunnel Token"
 
 完成后，就可以通过 Web 域名访问 OpenClaw，并通过 Cloudflare Access 做 SSH 穿透。
 
-<img width="820" height="725" alt="8c95851599b3d4c9386c923403f402b9" src="https://github.com/user-attachments/assets/bdc7ac5e-9ab1-4aa9-9d2f-9dcc002d8811" />
-<img width="731" height="650" alt="image" src="https://github.com/user-attachments/assets/5481b0f3-c328-4945-b142-d89179add788" />
-<img width="739" height="654" alt="image" src="https://github.com/user-attachments/assets/402f1096-7c84-4192-95c0-eb95a1fbab52" />
+
+<img width="820" height="725" alt="8c95851599b3d4c9386c923403f402b9" src="https://github.com/user-attachments/assets/8c09da7d-88e0-4d5b-b821-f9dea2235702" />
+
 
 
 ## 6. SSH 穿透准备
@@ -136,9 +135,6 @@ cloudflared.exe access ssh --hostname <设置的host> --url localhost:2222
 ```bash
 ssh node@localhost -p 2222
 ```
-
-如果你的本机 `ssh` 已经按 Cloudflare Access 的方式做过额外配置，也可以按你的既有方式接入，但最直接的方式就是先执行上一节的 `cloudflared.exe access ssh`，再连 `localhost:2222`。
-<img width="1045" height="106" alt="image" src="https://github.com/user-attachments/assets/252e6736-cf07-4ff8-b5b1-a652c490e914" />
 
 ## 8. 部署后的日常使用
 
