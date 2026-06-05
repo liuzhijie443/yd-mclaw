@@ -173,7 +173,7 @@ ssh node@localhost -p 2222
 bash /home/node/startall.sh
 ```
 
-这个操作会重新设置模型和 Cloudflare Tunnels 相关内容。
+重置MClaw只有/home/node/.openclaw会丢失数据（记忆、skills、模型配置等），其他数据不会丢失。
 
 如果此前设置过 `GATEWAY_AUTH_TOKEN`，那么官方客户端失联通常是正常现象，不代表部署失败。此时应该优先通过你配置好的 Cloudflare 域名访问 OpenClaw WebUI。
 
