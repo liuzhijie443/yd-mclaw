@@ -1,17 +1,32 @@
 # MClaw 使用与部署教程
 
 本文档面向最终用户，说明如何让 MClaw 切换模型、执行部署指南、配置 Cloudflare Tunnels、完成内网穿透，以及通过 SSH 连接容器。
+# 最简步骤
 
-## 0. 先理解这套部署做了什么
+## 1.更换模型
+把下面这段提示语发给 MClaw：
 
-这套方案的核心是让 MClaw 在容器里完成以下几件事：
+```md
+使用node.js修改模型，配置文件在/home/node/.openclaw/openclaw.json，完成后启用并重启openclaw。
+baseUrl：<修改字段>
+apiKey：<修改字段>
+model：<修改字段>
+```
 
-1. 修改 `/home/node/.openclaw/openclaw.json`，切换 OpenClaw 使用的模型。
-2. 安装并启动 `cloudflared`，让容器通过 Cloudflare Tunnel 对外提供访问入口。
-3. 安装并启动 `dropbear`，开放容器内 `2222` 端口给 SSH 穿透使用。
-4. 写入 `/home/node/startall.sh` 和 `/home/node/watchdog.sh`，实现重启恢复和进程保活。
+## 2.开始部署
 
-其中 `/home/node/startall.sh` 是整套环境的统一启动脚本。后续你让 MClaw “管理程序”或“执行初始化”时，本质上都围绕这个脚本工作。
+下载[MClaw部署指南.txt](https://raw.githubusercontent.com/liuzhijie443/yd-mclaw/refs/heads/main/MClaw%E9%83%A8%E7%BD%B2%E6%8C%87%E5%8D%97.txt) ，修改文档顶端变量：
+
+```bash
+GATEWAY_AUTH_TOKEN=""
+BASE_URL="模型BASE_URL"
+API_KEY="模型密钥"
+MODEL="模型名称"
+CF_TOKEN="你的 Cloudflare Tunnel Token"
+```
+上传给MClaw并让他`开始部署`。
+
+# 详细步骤
 
 ## 1. 先让 MClaw 切换模型
 
@@ -24,32 +39,21 @@ apiKey：<修改字段>
 model：<修改字段>
 ```
 
-这一步的目标是让 MClaw 自动修改 OpenClaw 的模型配置，并启用后重启生效，特别注意Token消耗，如果还在消耗就让他切换。
-
-如果你只是单独换模型，不涉及隧道或 SSH，这一步就足够了。
+让 MClaw 自动修改 OpenClaw 的模型配置，并启用后重启生效，特别注意Token消耗，如果还在消耗就让他切换。
 
 ## 2. 登录 Cloudflared 并创建隧道
-
-用户需要先在本机登录 Cloudflare，并新建一个 Tunnel，拿到 Cloudflare Tunnels Token。
-
-操作要求：
 
 1. 登录 Cloudflare Zero Trust 或 Tunnel 管理页面。
 2. 创建一个新的 Tunnel。
 3. 获取该 Tunnel 的 `token`。
 4. 保存好这个 `token`，后续要写入部署配置，ey开头到结尾的值。
-
-建议同时规划好两个域名用途：
-
-1. 一个用于 OpenClaw WebUI。
-2. 一个用于 SSH Access。
+5. 
 <img width="1515" height="594" alt="59948e9a774217b8b9d79334a66cb3f4" src="https://github.com/user-attachments/assets/31f29363-19b4-4fe5-ab3e-724b40695173" />
-
 <img width="1251" height="678" alt="604b5f02248bb6180609089c851415a0" src="https://github.com/user-attachments/assets/24153945-5a4f-40d2-82ff-9c37a79f188e" />
 
 ## 3. 下载并修改 `MClaw部署指南.txt`
 
-将项目中的 [MClaw部署指南.txt] 下载到本地，按文档中的变量配置修改以下变量：
+将项目中的 [MClaw部署指南.txt](https://raw.githubusercontent.com/liuzhijie443/yd-mclaw/refs/heads/main/MClaw%E9%83%A8%E7%BD%B2%E6%8C%87%E5%8D%97.txt) 下载到本地，按文档中的变量配置修改以下变量：
 
 ```bash
 GATEWAY_AUTH_TOKEN=""
@@ -63,7 +67,7 @@ CF_TOKEN="你的 Cloudflare Tunnel Token"
 
 1. `BASE_URL`、`API_KEY`、`MODEL` 用于 OpenClaw 的模型接入。
 2. `CF_TOKEN` 用于启动 Cloudflare Tunnel。
-3. `GATEWAY_AUTH_TOKEN` 用于 Gateway Token 登录和热更新，不需要时可以留空。
+3. `GATEWAY_AUTH_TOKEN` 用于龙虾的登录，会导致客户端失联，建议留空谨慎操作。
 
 必须特别注意：
 
@@ -75,7 +79,7 @@ CF_TOKEN="你的 Cloudflare Tunnel Token"
 <img width="1024" height="455" alt="9b42bbdcb9efe4bbb02b4a4380446743" src="https://github.com/user-attachments/assets/510c124f-443f-4e25-8414-bb77a8921f2c" />
 
 把你修改好的 `MClaw部署指南.txt` 交给 MClaw，让它严格按文档执行。执行过程中，它通常会完成这些内容：
-
+```
 1. 写入 `MEMORY.md`，让智能体记住容器环境限制、安装策略和程序管理方式。
 2. 安装 `cloudflared`。
 3. 安装并启动 `dropbear SSH`，端口为 `2222`。
@@ -83,8 +87,7 @@ CF_TOKEN="你的 Cloudflare Tunnel Token"
 5. 首次执行 `bash /home/node/startall.sh`。
 6. 在设置了 `GATEWAY_AUTH_TOKEN` 的情况下，通过 `gateway config.patch` 做热更新。
 7. 启用 `boot-md` Hook，确保容器重启后可以自动拉起底层服务。
-
-执行完成后，你需要确认至少有以下结果：
+```
 
 1. 连接器里有机器上线。
 2. OpenClaw 模型已经切换到你指定的模型。
