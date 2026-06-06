@@ -4,7 +4,7 @@
 # 最简步骤
 
 ## 1.更换模型
-把下面这段提示语发给 MClaw：
+~~把下面这段提示语发给 MClaw：~~
 
 ```md
 使用node.js修改模型，配置文件在/home/node/.openclaw/openclaw.json，完成后启用并重启openclaw。
@@ -12,19 +12,23 @@ baseUrl：<修改字段>
 apiKey：<修改字段>
 model：<修改字段>
 ```
+###  **以上方法不可用，下面是新方法**
+让AI备份/home/node/.openclaw上传云盘，下载修改重新上传到云盘同目录同文件，让AI恢复刚刚的备份，注意token消耗。
 
 ## 2.开始部署
 
 下载[MClaw部署指南.txt](https://raw.githubusercontent.com/liuzhijie443/yd-mclaw/refs/heads/main/MClaw%E9%83%A8%E7%BD%B2%E6%8C%87%E5%8D%97.txt) ，修改文档顶端变量：
 
 ```bash
-GATEWAY_AUTH_TOKEN=""
+GATEWAY_AUTH_TOKEN="admin123123"
 BASE_URL="模型BASE_URL"
 API_KEY="模型密钥"
 MODEL="模型名称"
 CF_TOKEN="你的 Cloudflare Tunnel Token"
 ```
 上传给MClaw并让他`开始部署`。
+
+**GATEWAY_AUTH_TOKEN，推荐设置，可能会绕过官方对于容器内的检测。**
 
 # 详细步骤
 
@@ -56,7 +60,7 @@ model：<修改字段>
 将项目中的 [MClaw部署指南.txt](https://raw.githubusercontent.com/liuzhijie443/yd-mclaw/refs/heads/main/MClaw%E9%83%A8%E7%BD%B2%E6%8C%87%E5%8D%97.txt) 下载到本地，按文档中的变量配置修改以下变量：
 
 ```bash
-GATEWAY_AUTH_TOKEN=""
+GATEWAY_AUTH_TOKEN="admina123123"
 BASE_URL="模型BASE_URL"
 API_KEY="模型密钥"
 MODEL="模型名称"
@@ -67,13 +71,15 @@ CF_TOKEN="你的 Cloudflare Tunnel Token"
 
 1. `BASE_URL`、`API_KEY`、`MODEL` 用于 OpenClaw 的模型接入。
 2. `CF_TOKEN` 用于启动 Cloudflare Tunnel。
-3. `GATEWAY_AUTH_TOKEN` 用于龙虾的登录，会导致客户端失联，建议留空谨慎操作。
+3. `GATEWAY_AUTH_TOKEN` 用于龙虾的登录，会导致客户端失联，~~建议留空谨慎操作~~。
+   
+**GATEWAY_AUTH_TOKEN，推荐设置，可能会绕过官方对于容器内的检测。**
 
-必须特别注意：
+~~必须特别注意：~~
 
-`GATEWAY_AUTH_TOKEN` 一旦设置，会导致官方客户端失联。设置后必须通过内网穿透访问 WebUI，不能再依赖官方客户端界面。这个配置会改变访问方式，请谨慎操作。
+~~`GATEWAY_AUTH_TOKEN` 一旦设置，会导致官方客户端失联。设置后必须通过内网穿透访问 WebUI，不能再依赖官方客户端界面。这个配置会改变访问方式，请谨慎操作。~~
 
-如果你不清楚是否需要改这个值，建议先保持为空，确认内网穿透链路可用后再决定是否启用。后续也可以让 MClaw 修改该字段，再执行 Gateway 热更新。
+~~如果你不清楚是否需要改这个值，建议先保持为空，确认内网穿透链路可用后再决定是否启用。后续也可以让 MClaw 修改该字段，再执行 Gateway 热更新。~~
 
 ## 4. 让 MClaw 执行部署指南
 <img width="1024" height="455" alt="9b42bbdcb9efe4bbb02b4a4380446743" src="https://github.com/user-attachments/assets/510c124f-443f-4e25-8414-bb77a8921f2c" />
